@@ -19,7 +19,7 @@ mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/dex"
 
 "$BT/aapt2" compile --dir res -o "$OUT/res.zip"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$JAR" --manifest AndroidManifest.xml "$OUT/res.zip" \
-  --java "$OUT/gen" --min-sdk-version 31 --target-sdk-version 35 --version-code 1 --version-name 1.0
+  --java "$OUT/gen" --min-sdk-version 31 --target-sdk-version 35 --version-code 1 --version-name 1.0.0
 javac -encoding UTF-8 --release 11 -Xlint:-options -classpath "$JAR" -d "$OUT/classes" \
   $(find src "$OUT/gen" -name '*.java')
 "$BT/d8" --release --min-api 31 --lib "$JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')

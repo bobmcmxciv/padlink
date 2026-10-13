@@ -26,9 +26,10 @@ Mac 端 `PadLink.app`（菜单栏程序）新建一块与平板分辨率一致�
 |---|---|---|
 | 系统自带 AirPlay 无线副屏（小米互联） | 113 ms | 130 ms |
 | PadLink 60 Hz | 39 ms | 64 ms |
-| PadLink 120 Hz | 30 ms | 39 ms |
+| PadLink 120 Hz（平板作副屏，内容 60 fps） | 30 ms | 39 ms |
+| PadLink 120 fps 模式（平板作主显示器，内容约 105 fps） | 30 ms | 37 ms |
 
-PadLink 两行的测试条件：Mac 已关闭 AWDL，且没有同时连着 AirPlay 副屏（原因见「故障排查」）。
+PadLink 各行的测试条件：Mac 已关闭 AWDL，且没有同时连着 AirPlay 副屏（原因见「故障排查」）。
 
 ## 从源码构建
 
@@ -95,9 +96,10 @@ adb install -r android/build/PadLink.apk
 - 平板打开 App 时自动连接
 - 插上 USB 线时自动使用有线连接
 - 刷新率：120 Hz（默认，延时更低）/ 60 Hz（更省电）
+- 120 fps 模式：连接时把平板设为主显示器，断开时还原。macOS 只按主显示器的刷新率合成副屏，平板作副屏时内容最多 60 fps，作主显示器时可达 120 fps。切换时 PadLink 会把每个窗口放回原来的屏幕；菜单栏与程序坞随主显示器移到平板。需要「辅助功能」权限。
 - 显示器排列、分辨率（更多空间）在 系统设置 → 显示器 中调整，与普通显示器相同
 
-命令行与自动化：`open padlink://connect`、`open padlink://disconnect`，可绑定到快捷指令。
+命令行与自动化：`open padlink://connect`、`open padlink://disconnect`、`open padlink://mainmode/on`（或 `off`），可绑定到快捷指令。
 
 编码参数可用 `defaults write com.bob.padlink.host <键> <值>` 调整：`codec`（hevc / h264）、`bitrate`（Mbps，默认 40）、`fps`（120 / 60）。
 
@@ -117,7 +119,8 @@ adb install -r android/build/PadLink.apk
 ## 已知限制
 
 - 第三方显示器无法出现在控制中心的「屏幕镜像」列表中，入口在菜单栏。
-- 即使选择 120 Hz，macOS 对虚拟显示器的实际合成帧率为 60 fps；平板屏幕在画面变化时运行在 120 Hz。
+- 平板作副屏时，macOS 按主显示器的刷新率合成它（60 Hz 的 MacBook 内屏 → 60 fps）；需要 120 fps 时打开「120 fps 模式」。
+- 开启台前调度时，左侧条中的窗口缩略图由系统管理，切换主显示器后可能出现在平板一侧。
 - 虚拟显示器使用 macOS 私有接口 `CGVirtualDisplay`（`mac/CGVirtualDisplay.h`），后续系统版本可能变化。
 
 ## 延时测量

@@ -47,6 +47,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { defaults.set(newValue, forKey: "usbAuto"); usb.enabled = newValue }
     }
     private var fps: Int { config.fpsOverridden ? config.fps : (defaults.object(forKey: "fps") as? Int ?? config.fps) }
+    /// Make the tablet the main display while connected: macOS then composites it at the full 120 Hz
+    /// (a secondary display follows the 60 Hz built-in panel). Windows stay on their physical screens.
+    private var mainMode: Bool {
+        get { defaults.bool(forKey: "tabletAsMain") }
+        set { defaults.set(newValue, forKey: "tabletAsMain") }
+    }
+    private let windowKeeper = WindowKeeper()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest-inject") {
@@ -75,7 +82,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var inputAllowed: Bool { CGPreflightPostEventAccess() }
 
     private func requestPermissions() {
-        Log.info("permissions: screen recording \(screenAllowed), input (accessibility) \(inputAllowed)")
+        Log.info("permissions: screen recording \(screenAllowed), input (accessibility) \(inputAllowed), window control \(AXIsProcessTrusted())")
         if !screenAllowed { CGRequestScreenCaptureAccess() }
         if !inputAllowed { CGRequestPostEventAccess() }
     }
@@ -228,6 +235,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         streamer = s
         c.send(.config, jsonData(["codec": s.codecMime, "width": w, "height": h, "fps": fps]))
         setState("已连接 \(name) · \(c.isUSB ? "USB" : "Wi-Fi") · \(fps)Hz \(hevc ? "HEVC" : "H.264")")
+        if mainMode { windowKeeper.makeMain(display.displayID) }
         Task {
             do {
                 try await s.start()
@@ -248,6 +256,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func detach(_ reason: String, usb wasUSB: Bool) {
+        windowKeeper.restore()
         streamer?.stop()
         streamer = nil
         injector?.releaseAll()
@@ -313,6 +322,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         add("平板打开 App 时自动连接", #selector(toggleAuto), on: autoConnect)
         add("插上 USB 线时自动使用有线连接", #selector(toggleUSB), on: usbAuto)
+        add("120 fps 模式：连接时平板作主显示器（窗口留在原屏幕）", #selector(toggleMainMode), on: mainMode)
         let rate = NSMenuItem(title: "刷新率", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for hz in [60, 120] {
@@ -370,6 +380,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if !c.isUSB { suppressed.insert(connName) }
                     c.close("disconnected by URL")
                 }
+            case "mainmode":
+                if (name == "on") != mainMode { toggleMainMode() }
             default:
                 break
             }
@@ -396,9 +408,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
+    @objc private func toggleMainMode() {
+        mainMode.toggle()
+        guard let display, conn != nil else { return }
+        if mainMode { windowKeeper.makeMain(display.displayID) } else { windowKeeper.restore() }
+    }
+
     @objc private func quit() {
-        conn?.close("quit")
-        NSApp.terminate(nil)
+        windowKeeper.restore {
+            self.conn?.close("quit")
+            NSApp.terminate(nil)
+        }
     }
 }
 
