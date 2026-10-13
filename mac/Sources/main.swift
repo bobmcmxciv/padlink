@@ -419,6 +419,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if !c.isUSB { suppressed.insert(connName) }
                     c.close("disconnected by URL")
                 }
+            case "swapwindows":
+                // Swap windows between the built-in screen and the tablet display.
+                if let pad = display?.displayID, let builtin = activeBuiltin() { windowKeeper.swapWindows(builtin, pad) }
             case "mainmode":
                 if (name == "on") != mainMode { toggleMainMode() }
             default:
@@ -499,6 +502,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func quitNow() { quit() }
+
+    private func activeBuiltin() -> CGDirectDisplayID? {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16); var n: UInt32 = 0
+        CGGetActiveDisplayList(16, &ids, &n)
+        return ids.prefix(Int(n)).first { CGDisplayIsBuiltin($0) == 1 }
+    }
 
     @objc private func quit() {
         bridge.stop()

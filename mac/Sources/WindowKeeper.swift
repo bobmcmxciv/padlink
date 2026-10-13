@@ -63,6 +63,25 @@ final class WindowKeeper {
         }
     }
 
+    /// Move every window on screen `a` to screen `b` and the other way round, at the same relative position.
+    func swapWindows(_ a: CGDirectDisplayID, _ b: CGDirectDisplayID, done: ((Int) -> Void)? = nil) {
+        queue.async {
+            let tracked = self.snapshot().compactMap { t -> Tracked? in
+                guard t.display == a || t.display == b else { return nil }
+                let to = t.display == a ? b : a
+                let from = CGDisplayBounds(t.display), dest = CGDisplayBounds(to)
+                // Keep the position proportional, so windows fit screens of different sizes.
+                let x = t.offset.x / max(from.width, 1) * dest.width, y = t.offset.y / max(from.height, 1) * dest.height
+                return Tracked(element: t.element, display: to, offset: CGPoint(x: x, y: y))
+            }
+            var moved = self.place(tracked)
+            Thread.sleep(forTimeInterval: 0.6)
+            moved += self.place(tracked)
+            Log.info("swapped \(tracked.count) windows between displays \(a) and \(b)")
+            DispatchQueue.main.async { done?(moved) }
+        }
+    }
+
     // MARK: Windows
 
     private func snapshot() -> [Tracked] {
