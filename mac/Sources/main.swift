@@ -498,6 +498,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if mainMode { windowKeeper.makeMain(display.displayID) } else { windowKeeper.restore() }
     }
 
+    func quitNow() { quit() }
+
     @objc private func quit() {
         bridge.stop()
         windowKeeper.restore {
@@ -511,4 +513,9 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let controller = AppController()
 app.delegate = controller
+// pkill / logout / shutdown: give the main display and the windows back before exiting, as Quit does.
+signal(SIGTERM, SIG_IGN)
+let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+termSource.setEventHandler { controller.quitNow() }
+termSource.resume()
 app.run()

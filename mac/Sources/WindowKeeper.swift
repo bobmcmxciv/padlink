@@ -78,9 +78,14 @@ final class WindowKeeper {
                 if boolAttr(w, kAXMinimizedAttribute) || boolAttr(w, "AXFullScreen") { continue }
                 guard let frame = frame(of: w) else { continue }
                 let center = CGPoint(x: frame.midX, y: frame.midY)
-                guard let d = displays.first(where: { CGDisplayBounds($0).contains(center) }) else { continue }
+                // A window left outside every screen (e.g. after a display vanished) belongs to the nearest one
+                // and is pulled back into view.
+                guard let d = displays.first(where: { CGDisplayBounds($0).contains(center) })
+                        ?? displays.min(by: { distance(center, CGDisplayBounds($0)) < distance(center, CGDisplayBounds($1)) }) else { continue }
                 let b = CGDisplayBounds(d)
-                out.append(Tracked(element: w, display: d, offset: CGPoint(x: frame.minX - b.minX, y: frame.minY - b.minY)))
+                let ox = min(max(frame.minX - b.minX, 0), max(0, b.width - min(frame.width, b.width)))
+                let oy = min(max(frame.minY - b.minY, 0), max(0, b.height - min(frame.height, b.height)))
+                out.append(Tracked(element: w, display: d, offset: CGPoint(x: ox, y: oy)))
             }
         }
         return out
@@ -97,6 +102,10 @@ final class WindowKeeper {
             if AXUIElementSetAttributeValue(t.element, kAXPositionAttribute as CFString, v) == .success { moved += 1 }
         }
         return moved
+    }
+
+    private func distance(_ p: CGPoint, _ r: CGRect) -> CGFloat {
+        hypot(max(r.minX - p.x, 0, p.x - r.maxX), max(r.minY - p.y, 0, p.y - r.maxY))
     }
 
     private func frame(of w: AXUIElement) -> CGRect? {
