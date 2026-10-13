@@ -35,6 +35,7 @@ final class WindowKeeper {
     }
 
     private func switchMain(to target: CGDirectDisplayID, done: (() -> Void)?) {
+        busy = true
         queue.async {
             let tracked = self.snapshot()
             DispatchQueue.main.async {
@@ -55,11 +56,63 @@ final class WindowKeeper {
                         moved += self.place(tracked)      // a second pass for windows that were still animating
                         Log.info("windows put back: \(moved) position updates")
                         DispatchQueue.main.async {
+                            self.busy = false
                             done?()
                         }
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Layout memory
+    // Which screen (Mac or tablet) each window belongs to, refreshed while the layout is stable, so windows can be
+    // put back after the tablet display vanished unexpectedly (sleep, lock, cable) and macOS shuffled them.
+
+    private struct Remembered {
+        let element: AXUIElement
+        let onTablet: Bool
+        let fx: CGFloat, fy: CGFloat     // origin as a fraction of the screen size
+    }
+    private var memory: [Remembered] = []
+    private(set) var busy = false
+    var hasMemory: Bool { !memory.isEmpty }
+
+    /// Record the current layout. Only call while both screens are present and nothing is reconfiguring.
+    func remember(tablet: CGDirectDisplayID, builtin: CGDirectDisplayID) {
+        guard !busy else { return }
+        queue.async {
+            let now = self.snapshot().compactMap { t -> Remembered? in
+                guard t.display == tablet || t.display == builtin else { return nil }
+                let b = CGDisplayBounds(t.display)
+                return Remembered(element: t.element, onTablet: t.display == tablet,
+                                  fx: t.offset.x / max(b.width, 1), fy: t.offset.y / max(b.height, 1))
+            }
+            guard !now.isEmpty else { return }
+            // People move windows one or two at a time; many windows changing screen at once means the system
+            // shuffled them, and the old layout is the one to keep.
+            let changed = now.filter { n in self.memory.contains { CFEqual($0.element, n.element) && $0.onTablet != n.onTablet } }.count
+            if !self.memory.isEmpty && changed > max(2, now.count / 2) {
+                Log.info("window layout: \(changed) windows changed screen at once, keeping the remembered layout")
+                return
+            }
+            self.memory = now
+        }
+    }
+
+    /// Put every remembered window back on its screen.
+    func restoreLayout(tablet: CGDirectDisplayID, builtin: CGDirectDisplayID, done: ((Int) -> Void)? = nil) {
+        queue.async {
+            let tb = CGDisplayBounds(tablet), mb = CGDisplayBounds(builtin)
+            let tracked = self.memory.map { m -> Tracked in
+                let b = m.onTablet ? tb : mb
+                return Tracked(element: m.element, display: m.onTablet ? tablet : builtin, offset: CGPoint(x: m.fx * b.width, y: m.fy * b.height))
+            }
+            var moved = self.place(tracked)
+            Thread.sleep(forTimeInterval: 0.6)
+            moved += self.place(tracked)
+            Log.info("window layout restored: \(tracked.count) windows, \(moved) position updates")
+            DispatchQueue.main.async { done?(moved) }
         }
     }
 

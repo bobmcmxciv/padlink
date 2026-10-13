@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Network
 import ServiceManagement
+import Carbon
 
 /// Owns the tablet connection lifecycle: find the tablet (Bonjour or USB), connect, create the virtual
 /// display, stream it, inject input. On a dropped link the display is kept for a grace period so a brief
@@ -92,6 +93,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hidLink.onClipboard = { [weak self] text in self?.clipboardFromTablet(text) }
         applyBridgeSettings()
         Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in self?.pollPasteboard() }
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.rememberWindowLayout() }
+        CGDisplayRegisterReconfigurationCallback({ _, _, info in
+            let me = Unmanaged<AppController>.fromOpaque(info!).takeUnretainedValue()
+            me.lastReconfiguration = Date()
+        }, Unmanaged.passUnretained(self).toOpaque())
+        registerRestoreHotKey()
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.tryConnect() }
         tryConnect()
     }
@@ -255,7 +262,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         streamer = s
         c.send(.config, jsonData(["codec": s.codecMime, "width": w, "height": h, "fps": fps]))
         setState("已连接 \(name) · \(c.isUSB ? "USB" : "Wi-Fi") · \(fps)Hz \(hevc ? "HEVC" : "H.264")")
-        if mainMode { windowKeeper.makeMain(display.displayID) }
+        // Main display switch (120 fps mode), then the remembered window layout (e.g. after the display dropped).
+        let tabletID = display.displayID
+        if mainMode {
+            windowKeeper.makeMain(tabletID) { [weak self] in self?.restoreWindowLayout() }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.restoreWindowLayout() }
+        }
         bridge.forceLeave()
         bridge.allowed = false      // the tablet is a Mac display now; the pointer reaches it directly
         Task {
@@ -359,6 +372,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bridgeItem.submenu = bridgeMenu
         menu.addItem(bridgeItem)
         add("共享剪贴板", #selector(toggleClipboard), on: clipboardSync)
+        add("恢复窗口布局（⌃⌥⌘W）", display != nil && windowKeeper.hasMemory ? #selector(restoreWindowsFromMenu) : nil)
         if !hidState.isEmpty && (bridgeSide != "off" || clipboardSync) {
             add("　\(hidLink.isUSB ? "USB 已连接（鼠标/键盘）" : hidState)", nil, enabled: false)
         }
@@ -419,6 +433,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if !c.isUSB { suppressed.insert(connName) }
                     c.close("disconnected by URL")
                 }
+            case "restorewindows":
+                restoreWindowLayout()
             case "swapwindows":
                 // Swap windows between the built-in screen and the tablet display.
                 if let pad = display?.displayID, let builtin = activeBuiltin() { windowKeeper.swapWindows(builtin, pad) }
@@ -499,6 +515,37 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMode.toggle()
         guard let display, conn != nil else { return }
         if mainMode { windowKeeper.makeMain(display.displayID) } else { windowKeeper.restore() }
+    }
+
+    // MARK: Window layout memory
+
+    /// Last display reconfiguration (plug, sleep, main switch); the layout is not recorded right after one.
+    var lastReconfiguration = Date.distantPast
+    private var hotKeyRef: EventHotKeyRef?
+
+    private func rememberWindowLayout() {
+        guard let tablet = display?.displayID, conn != nil, streamer != nil, let builtin = activeBuiltin(),
+              CGDisplayBounds(tablet).width > 0, Date().timeIntervalSince(lastReconfiguration) > 6 else { return }
+        windowKeeper.remember(tablet: tablet, builtin: builtin)
+    }
+
+    private func restoreWindowLayout() {
+        guard let tablet = display?.displayID, let builtin = activeBuiltin(), windowKeeper.hasMemory else { return }
+        windowKeeper.restoreLayout(tablet: tablet, builtin: builtin)
+    }
+
+    @objc private func restoreWindowsFromMenu() { restoreWindowLayout() }
+
+    /// Control-Option-Command-W puts every window back on its screen, from anywhere.
+    private func registerRestoreHotKey() {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, _, ctx in
+            let me = Unmanaged<AppController>.fromOpaque(ctx!).takeUnretainedValue()
+            DispatchQueue.main.async { me.restoreWindowLayout() }
+            return noErr
+        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
+        let id = EventHotKeyID(signature: OSType(0x504C_4E4B), id: 1)   // 'PLNK'
+        RegisterEventHotKey(UInt32(kVK_ANSI_W), UInt32(cmdKey | optionKey | controlKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
     }
 
     func quitNow() { quit() }

@@ -109,10 +109,11 @@ adb install -r android/build/PadLink.apk
 - 平板打开 App 时自动连接
 - 插上 USB 线时自动使用有线连接
 - 刷新率：120 Hz（默认，延时更低）/ 60 Hz（更省电）
+- 恢复窗口布局（⌃⌥⌘W）：连接期间 PadLink 记住每个窗口属于 Mac 屏还是平板；平板显示器意外断开（睡眠、锁屏、拔线）后重新连上时自动放回，任何时候也可按 ⌃⌥⌘W 手动恢复。
 - 120 fps 模式：连接时把平板设为主显示器，断开时还原。macOS 只按主显示器的刷新率合成副屏，平板作副屏时内容最多 60 fps，作主显示器时可达 120 fps。切换时 PadLink 会把每个窗口放回原来的屏幕；菜单栏与程序坞随主显示器移到平板。需要「辅助功能」权限。
 - 显示器排列、分辨率（更多空间）在 系统设置 → 显示器 中调整，与普通显示器相同
 
-命令行与自动化：`open padlink://connect`、`open padlink://disconnect`、`open padlink://mainmode/on`（或 `off`）、`open padlink://swapwindows`（互换 Mac 屏与平板上的窗口），可绑定到快捷指令。
+命令行与自动化：`open padlink://connect`、`open padlink://disconnect`、`open padlink://mainmode/on`（或 `off`）、`open padlink://swapwindows`（互换 Mac 屏与平板上的窗口）、`open padlink://restorewindows`（恢复窗口布局），可绑定到快捷指令。
 
 编码参数可用 `defaults write com.bob.padlink.host <键> <值>` 调整：`codec`（hevc / h264）、`bitrate`（Mbps，默认 40）、`fps`（120 / 60）。
 
