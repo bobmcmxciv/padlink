@@ -3,10 +3,12 @@ package com.bob.padlink;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.os.BatteryManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -16,6 +18,8 @@ import android.view.WindowManager;
  * redrawn every frame on top of whatever is on screen (PadLink or the AirPlay receiver).
  * A screenshot then holds both the Mac's clock barcode (through the display path) and this one.
  * adb shell am broadcast -n com.bob.padlink/.ProbeReceiver --ez show true|false
+ * Power measurement aid: --ei battlog <seconds> writes battery current and voltage every 2 s to
+ * /sdcard/Android/data/com.bob.padlink/files/batt.tsv (shell has no access to the battery current).
  */
 public class ProbeReceiver extends BroadcastReceiver {
     private static View overlay;
@@ -23,6 +27,11 @@ public class ProbeReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Context app = context.getApplicationContext();
+        int battSeconds = intent.getIntExtra("battlog", 0);
+        if (battSeconds > 0) {
+            logBattery(app, battSeconds);
+            return;
+        }
         WindowManager wm = app.getSystemService(WindowManager.class);
         if (overlay != null) {
             wm.removeView(overlay);
@@ -41,6 +50,24 @@ public class ProbeReceiver extends BroadcastReceiver {
         lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         overlay = new BarcodeView(app, block);
         wm.addView(overlay, lp);
+    }
+
+    private static void logBattery(Context app, int seconds) {
+        new Thread(() -> {
+            java.io.File f = new java.io.File(app.getExternalFilesDir(null), "batt.tsv");
+            BatteryManager bm = app.getSystemService(BatteryManager.class);
+            try (java.io.FileWriter w = new java.io.FileWriter(f, false)) {
+                for (int i = 0; i < seconds / 2; i++) {
+                    Intent b = app.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                    w.write(System.currentTimeMillis() + "\t" + bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+                            + "\t" + (b != null ? b.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) : 0)
+                            + "\t" + (b != null ? b.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) : 0) + "\n");
+                    w.flush();
+                    Thread.sleep(2000);
+                }
+            } catch (java.io.IOException | InterruptedException ignored) {
+            }
+        }, "padlink-battlog").start();
     }
 
     static final class BarcodeView extends View {

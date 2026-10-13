@@ -21,6 +21,12 @@ final class WindowKeeper {
 
     /// Make `display` the main display. Calls `done` on the main queue.
     func makeMain(_ display: CGDirectDisplayID, done: (() -> Void)? = nil) {
+        // A quick reconnect (USB unplugged, Wi-Fi takes over) can arrive while the disconnect still hands the main
+        // display back to the Mac; wait for that, or it would undo this switch.
+        if busy {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.makeMain(display, done: done) }
+            return
+        }
         guard CGMainDisplayID() != display else { done?(); return }
         if originalMain == nil { originalMain = CGMainDisplayID() }
         switchMain(to: display, done: done)
