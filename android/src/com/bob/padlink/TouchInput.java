@@ -90,7 +90,14 @@ final class TouchInput {
     private float nx(float x) { return x / width(); }
     private float ny(float y) { return y / height(); }
 
+    /** Input from PadLink's own virtual mouse / keyboard (Mac mouse sharing) must never be sent back to the Mac. */
+    static boolean fromBridge(android.view.InputEvent e) {
+        android.view.InputDevice d = e.getDevice();
+        return d != null && d.getName() != null && d.getName().startsWith("PadLink ");
+    }
+
     boolean onTouch(MotionEvent e) {
+        if (fromBridge(e)) return true;
         int tool = e.getToolType(e.getActionIndex());
         if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) return onPen(e);
         if (tool == MotionEvent.TOOL_TYPE_MOUSE) return onMouseTouch(e);
@@ -306,6 +313,7 @@ final class TouchInput {
     // ---- Hover (stylus / mouse) ----
 
     boolean onHover(MotionEvent e) {
+        if (fromBridge(e)) return true;
         int a = e.getActionMasked();
         if (a == MotionEvent.ACTION_HOVER_MOVE || a == MotionEvent.ACTION_HOVER_ENTER) {
             sink.input(MOVE, 0, 0, 0, nx(e.getX()), ny(e.getY()), 0, 0, 0);
@@ -326,6 +334,7 @@ final class TouchInput {
     }
 
     boolean onGenericMotion(MotionEvent e) {
+        if (fromBridge(e)) return true;
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_SCROLL: {
                 float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL), h = e.getAxisValue(MotionEvent.AXIS_HSCROLL);

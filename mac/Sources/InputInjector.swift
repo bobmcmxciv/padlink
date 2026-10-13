@@ -16,7 +16,16 @@ final class InputInjector {
     private var clickCount = 1
     private var lastClick: (button: Int, time: TimeInterval, point: CGPoint)?
     private var scrollRemainder = (x: 0.0, y: 0.0)
-    private var keyFlags: CGEventFlags = []
+    /// Modifier keys held on the tablet keyboard. Tracked from their own key events (the tablet's meta state on a
+    /// modifier's own event can be inverted) and applied to every keyboard, pointer and scroll event.
+    private var heldModifiers: [CGKeyCode: CGEventFlags] = [:]
+    private static let modifierKeys: [CGKeyCode: CGEventFlags] = [
+        0x37: .maskCommand, 0x36: .maskCommand, 0x38: .maskShift, 0x3C: .maskShift,
+        0x3B: .maskControl, 0x3E: .maskControl, 0x3A: .maskAlternate, 0x3D: .maskAlternate,
+    ]
+    private var modifiers: CGEventFlags {
+        heldModifiers.values.reduce(into: CGEventFlags()) { $0.insert($1) }
+    }
 
     init(displayID: CGDirectDisplayID) {
         self.displayID = displayID
@@ -80,15 +89,22 @@ final class InputInjector {
             e.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
             e.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
             e.location = lastPoint
+            e.flags = modifiers
             e.post(tap: .cghidEventTap)
         case .magnify:
             postMagnify(delta: a, phase: phase)
         case .key:
             let keyCode = CGKeyCode(extra & 0xffff)
             let down = button == 1
-            keyFlags = CGEventFlags(rawValue: UInt64(extra >> 16) << 16)
+            let tabletFlags = CGEventFlags(rawValue: UInt64(extra >> 16) << 16)
             guard let e = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: down) else { return }
-            e.flags = keyFlags
+            if let flag = Self.modifierKeys[keyCode] {
+                if down { heldModifiers[keyCode] = flag } else { heldModifiers.removeValue(forKey: keyCode) }
+                e.type = .flagsChanged
+                e.flags = modifiers
+            } else {
+                e.flags = modifiers.union(tabletFlags)
+            }
             e.post(tap: .cghidEventTap)
         }
     }
@@ -109,6 +125,13 @@ final class InputInjector {
     func releaseAll() {
         for b in buttonsDown { post(upType(b), at: lastPoint, button: b, pressure: 0, clicks: 1) }
         buttonsDown.removeAll()
+        for key in heldModifiers.keys {
+            heldModifiers.removeValue(forKey: key)
+            guard let e = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { continue }
+            e.type = .flagsChanged
+            e.flags = modifiers
+            e.post(tap: .cghidEventTap)
+        }
     }
 
     private func downType(_ b: Int) -> CGEventType { b == 0 ? .leftMouseDown : b == 1 ? .rightMouseDown : .otherMouseDown }
@@ -128,6 +151,7 @@ final class InputInjector {
         e.setIntegerValueField(.mouseEventClickState, value: Int64(clicks))
         if button == 2 { e.setIntegerValueField(.mouseEventButtonNumber, value: 2) }
         if type != .mouseMoved { e.setDoubleValueField(.mouseEventPressure, value: pressure) }
+        e.flags = modifiers      // Cmd-click / Shift-click with the tablet keyboard
         e.post(tap: .cghidEventTap)
     }
 }

@@ -174,7 +174,7 @@ final class USBWatcher {
     func linkClosed() { queue.async { self.busy = false } }
 
     private func poll() {
-        guard enabled, !busy, let ctx else { return }
+        guard let ctx else { return }
         var list: UnsafeMutablePointer<OpaquePointer?>?
         let n = libusb_get_device_list(ctx, &list)
         guard n >= 0, let list else { return }
@@ -186,7 +186,12 @@ final class USBWatcher {
             guard libusb_get_device_descriptor(dev, &d) == 0 else { continue }
             let key = "\(libusb_get_bus_number(dev))-\(libusb_get_port_number(dev))-\(String(d.idVendor, radix: 16)):\(String(d.idProduct, radix: 16))"
             present.insert(key)
-            if d.idVendor == 0x18D1 && (0x2D00...0x2D05).contains(d.idProduct) {
+            let isAccessory = d.idVendor == 0x18D1 && (0x2D00...0x2D05).contains(d.idProduct)
+            if hidWanted && hidHandle == nil && (isAccessory || androidVendors.contains(d.idVendor)) {
+                pollHID(dev, key: key)
+            }
+            guard enabled, !busy else { continue }
+            if isAccessory {
                 if let io = openAccessory(dev) {
                     busy = true
                     Log.info("usb: accessory link open (\(key))")
@@ -199,6 +204,7 @@ final class USBWatcher {
             }
         }
         asked = asked.filter { present.contains($0.key) }
+        if let k = hidKey, !present.contains(k) || !hidWanted { closeHID() }
     }
 
     private func requestAccessoryMode(_ dev: OpaquePointer, key: String) {
@@ -237,4 +243,76 @@ final class USBWatcher {
         }
         return USBIO(handle: h, epIn: epIn, epOut: epOut, name: "USB")
     }
+
+    // MARK: Android Open Accessory HID (mouse + keyboard over the cable, no adb)
+
+    /// Set by HidLink while mouse sharing is on.
+    var hidWanted = false
+    private var hidHandle: OpaquePointer?
+    private var hidKey: String?
+    private let hidLock = NSLock()
+    private var _hidReady = false
+    var hidReady: Bool { hidLock.lock(); defer { hidLock.unlock() }; return _hidReady }
+
+    private func setHidReady(_ v: Bool) { hidLock.lock(); _hidReady = v; hidLock.unlock() }
+
+    func sendHID(id: UInt16, report: Data) {
+        queue.async {
+            guard let h = self.hidHandle else { return }
+            var bytes = [UInt8](report)
+            let rc = libusb_control_transfer(h, 0x40, 57, id, 0, &bytes, UInt16(bytes.count), 500)
+            if rc < 0 { Log.info("usb: hid send failed (\(rc))"); self.closeHID() }
+        }
+    }
+
+    private func pollHID(_ dev: OpaquePointer, key: String) {
+        var h: OpaquePointer?
+        guard libusb_open(dev, &h) == 0, let h else { return }
+        var ver: [UInt8] = [0, 0]
+        guard libusb_control_transfer(h, 0xC0, 51, 0, 0, &ver, 2, 1000) == 2, ver[0] >= 2 else {
+            libusb_close(h); return
+        }
+        for (id, desc) in [(HidLink.mouseID, HIDDescriptors.mouse), (HidLink.keyboardID, HIDDescriptors.keyboard)] {
+            var d = desc
+            _ = libusb_control_transfer(h, 0x40, 55, id, 0, nil, 0, 500)                        // unregister leftovers
+            guard libusb_control_transfer(h, 0x40, 54, id, UInt16(d.count), nil, 0, 1000) >= 0,     // register
+                  libusb_control_transfer(h, 0x40, 56, id, 0, &d, UInt16(d.count), 1000) >= 0 else { // descriptor
+                Log.info("usb: AOA HID registration failed on \(key)")
+                libusb_close(h); return
+            }
+        }
+        hidHandle = h
+        hidKey = key
+        setHidReady(true)
+        Log.info("usb: AOA HID mouse + keyboard on \(key)")
+    }
+
+    private func closeHID() {
+        if let h = hidHandle {
+            for id in [HidLink.mouseID, HidLink.keyboardID] { _ = libusb_control_transfer(h, 0x40, 55, id, 0, nil, 0, 200) }
+            libusb_close(h)
+        }
+        hidHandle = nil
+        hidKey = nil
+        setHidReady(false)
+    }
+}
+
+/// Report descriptors shared by the adb (uhid) and USB (AOA) transports; same as HidServer.java.
+enum HIDDescriptors {
+    static let mouse: [UInt8] = [
+        0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00,
+        0x05, 0x09, 0x19, 0x01, 0x29, 0x05, 0x15, 0x00, 0x25, 0x01, 0x95, 0x05, 0x75, 0x01, 0x81, 0x02,
+        0x95, 0x01, 0x75, 0x03, 0x81, 0x01,
+        0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F, 0x75, 0x10, 0x95, 0x02, 0x81, 0x06,
+        0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
+        0x05, 0x0C, 0x0A, 0x38, 0x02, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
+        0xC0, 0xC0,
+    ]
+    static let keyboard: [UInt8] = [
+        0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01,
+        0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+        0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x05, 0x07, 0x19, 0x00, 0x2A, 0xFF, 0x00, 0x81, 0x00,
+        0xC0,
+    ]
 }

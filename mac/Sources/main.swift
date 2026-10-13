@@ -55,6 +55,22 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private let windowKeeper = WindowKeeper()
 
+    // Mouse sharing and clipboard (work without the extended display).
+    private lazy var hidLink = HidLink(usb: usb)
+    private lazy var bridge = MouseBridge(hid: hidLink)
+    private var hidState = ""
+    /// "off" | "left" | "right": where the tablet sits next to the Mac for mouse sharing.
+    private var bridgeSide: String {
+        get { defaults.string(forKey: "mouseBridge") ?? "off" }
+        set { defaults.set(newValue, forKey: "mouseBridge") }
+    }
+    private var clipboardSync: Bool {
+        get { defaults.object(forKey: "clipboardSync") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "clipboardSync") }
+    }
+    private var pasteboardCount = NSPasteboard.general.changeCount
+    private var pasteboardFromTablet = -1
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--selftest-inject") {
             InputInjector.selfTest { exit(0) }
@@ -72,6 +88,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         usb.enabled = usbAuto
         usb.onLink = { [weak self] io in self?.attachUSB(io) }
         usb.start()
+        hidLink.onState = { [weak self] s in self?.hidState = s }
+        hidLink.onClipboard = { [weak self] text in self?.clipboardFromTablet(text) }
+        applyBridgeSettings()
+        Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in self?.pollPasteboard() }
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in self?.tryConnect() }
         tryConnect()
     }
@@ -236,6 +256,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         c.send(.config, jsonData(["codec": s.codecMime, "width": w, "height": h, "fps": fps]))
         setState("已连接 \(name) · \(c.isUSB ? "USB" : "Wi-Fi") · \(fps)Hz \(hevc ? "HEVC" : "H.264")")
         if mainMode { windowKeeper.makeMain(display.displayID) }
+        bridge.forceLeave()
+        bridge.allowed = false      // the tablet is a Mac display now; the pointer reaches it directly
         Task {
             do {
                 try await s.start()
@@ -257,6 +279,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func detach(_ reason: String, usb wasUSB: Bool) {
         windowKeeper.restore()
+        bridge.allowed = true
         streamer?.stop()
         streamer = nil
         injector?.releaseAll()
@@ -323,6 +346,22 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add("平板打开 App 时自动连接", #selector(toggleAuto), on: autoConnect)
         add("插上 USB 线时自动使用有线连接", #selector(toggleUSB), on: usbAuto)
         add("120 fps 模式：连接时平板作主显示器（窗口留在原屏幕）", #selector(toggleMainMode), on: mainMode)
+        menu.addItem(.separator())
+        let bridgeItem = NSMenuItem(title: "鼠标穿越到平板（不开副屏时）", action: nil, keyEquivalent: "")
+        let bridgeMenu = NSMenu()
+        for (key, title) in [("off", "关闭"), ("left", "平板在 Mac 左侧"), ("right", "平板在 Mac 右侧")] {
+            let i = NSMenuItem(title: title, action: #selector(setBridgeSide(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = key
+            i.state = bridgeSide == key ? .on : .off
+            bridgeMenu.addItem(i)
+        }
+        bridgeItem.submenu = bridgeMenu
+        menu.addItem(bridgeItem)
+        add("共享剪贴板", #selector(toggleClipboard), on: clipboardSync)
+        if !hidState.isEmpty && (bridgeSide != "off" || clipboardSync) {
+            add("　\(hidLink.isUSB ? "USB 已连接（鼠标/键盘）" : hidState)", nil, enabled: false)
+        }
         let rate = NSMenuItem(title: "刷新率", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for hz in [60, 120] {
@@ -408,6 +447,51 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
+    // MARK: Mouse sharing / clipboard
+
+    private func applyBridgeSettings() {
+        let side = bridgeSide
+        if side != "off" || clipboardSync {
+            hidLink.tabletHosts = { [weak self] in self?.discovered.values.map { $0.host } ?? [] }
+            hidLink.start()
+        } else {
+            hidLink.stop()
+        }
+        if side == "off" {
+            bridge.stop()
+        } else {
+            bridge.side = side == "right" ? .right : .left
+            bridge.start()
+        }
+    }
+
+    @objc private func setBridgeSide(_ sender: NSMenuItem) {
+        bridgeSide = sender.representedObject as? String ?? "off"
+        applyBridgeSettings()
+    }
+
+    @objc private func toggleClipboard() {
+        clipboardSync.toggle()
+        applyBridgeSettings()
+    }
+
+    private func pollPasteboard() {
+        let pb = NSPasteboard.general
+        guard pb.changeCount != pasteboardCount else { return }
+        pasteboardCount = pb.changeCount
+        guard clipboardSync, pasteboardCount != pasteboardFromTablet, let s = pb.string(forType: .string), !s.isEmpty else { return }
+        hidLink.sendClipboard(s)
+    }
+
+    private func clipboardFromTablet(_ text: String) {
+        guard clipboardSync else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        pasteboardCount = pb.changeCount
+        pasteboardFromTablet = pb.changeCount
+    }
+
     @objc private func toggleMainMode() {
         mainMode.toggle()
         guard let display, conn != nil else { return }
@@ -415,6 +499,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() {
+        bridge.stop()
         windowKeeper.restore {
             self.conn?.close("quit")
             NSApp.terminate(nil)

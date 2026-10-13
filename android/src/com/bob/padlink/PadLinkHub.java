@@ -64,7 +64,7 @@ final class PadLinkHub implements Session.Listener {
     private boolean want;
     private String lastEnd = "";
     private Ui ui;
-    private boolean uiVisible;
+    private volatile boolean uiVisible;
 
     static synchronized PadLinkHub get(Context c) {
         if (instance == null) instance = new PadLinkHub(c.getApplicationContext());
@@ -77,6 +77,7 @@ final class PadLinkHub implements Session.Listener {
 
     Session session() { return session; }
     String lastEnd() { return lastEnd; }
+    boolean isUiVisible() { return uiVisible; }
 
     /** Leaving the display in the background keeps the Mac's windows in place for a while, then lets go. */
     private final Runnable backgroundTimeout = () -> {
@@ -89,6 +90,7 @@ final class PadLinkHub implements Session.Listener {
         main.removeCallbacks(backgroundTimeout);
         if (!visible) main.postDelayed(backgroundTimeout, 60_000);
         if (running) addAnchor();   // the overlay permission may have been granted since start()
+        KeyCaptureService.setFilteringIfRunning(visible);
     }
 
     void start() {

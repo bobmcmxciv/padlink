@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_capture_label">Mac 副屏键盘</string>
+    <string name="key_capture_description">在「Mac 副屏」全屏连接时，把外接键盘的按键（包括 Win 键和 Win 组合键）直接发给 Mac，Win 键作为 Command 使用。其他时候不处理任何按键，也不读取屏幕内容。</string>
+</resources>

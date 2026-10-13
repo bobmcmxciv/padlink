@@ -284,6 +284,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Pa
                     + "\nMac 上的 PadLink 会自动连接；也可用 USB 线直连"
                     + (android.provider.Settings.canDrawOverlays(this) ? ""
                         : "\n\n提示：允许本应用「显示在其他应用的上层」后，\nMac 菜单栏选中本机即可直接唤出副屏")
+                    + (KeyCaptureService.running || getResources().getConfiguration().keyboard != android.content.res.Configuration.KEYBOARD_QWERTY ? ""
+                        : "\n\n提示：在 设置 → 无障碍 中打开「Mac 副屏键盘」，\n键盘的 Win 键即可作为 Mac 的 Command 使用")
                     + (end.isEmpty() ? "" : "\n\n上次断开：" + end);
         }
         statusView.setText(text);
@@ -296,6 +298,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, Pa
     public boolean dispatchKeyEvent(KeyEvent e) {
         int mac = KeyMap.macKeyCode(e.getKeyCode());
         Session s = hub.session();
+        if (TouchInput.fromBridge(e)) return super.dispatchKeyEvent(e);
         if (mac < 0 || s == null || !s.hasVideo()) return super.dispatchKeyEvent(e);
         int action = e.getAction();
         if (action == KeyEvent.ACTION_DOWN || action == KeyEvent.ACTION_UP) {
