@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.bob.padlink.host</string>
+    <key>CFBundleName</key>
+    <string>PadLink</string>
+    <key>CFBundleDisplayName</key>
+    <string>PadLink</string>
+    <key>CFBundleExecutable</key>
+    <string>PadLink</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>PadLink 需要连接局域网内的平板，把它用作 Mac 的触控副屏。</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.bob.padlink.host</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>padlink</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_padlink._tcp</string>
+    </array>
+</dict>
+</plist>
