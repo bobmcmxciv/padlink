@@ -20,7 +20,7 @@ Mac 端 `PadLink.app`（菜单栏程序）新建一块与平板分辨率一致�
 
 ## 性能
 
-端到端延时 = Mac 上画出一帧 → 平板屏幕合成出这一帧，用 `tools/latency-probe` 测得（Wi-Fi，3200×2136；PadLink 每组 30 个样本，AirPlay 14 个）：
+端到端延时 = Mac 上画出一帧 → 平板屏幕合成出这一帧，用 `tools/latency-probe` 测得（3200×2136；除标注有线外均为 Wi-Fi；PadLink 每组 30 个样本，AirPlay 14 个）：
 
 | 方案 | 中位数 | p90 |
 |---|---|---|
@@ -28,8 +28,9 @@ Mac 端 `PadLink.app`（菜单栏程序）新建一块与平板分辨率一致�
 | PadLink 60 Hz | 39 ms | 64 ms |
 | PadLink 120 Hz（平板作副屏，内容 60 fps） | 30 ms | 39 ms |
 | PadLink 120 fps 模式（平板作主显示器，内容约 105 fps） | 30 ms | 37 ms |
+| PadLink 120 fps 模式 + USB-C 有线 | 24 ms | 33 ms |
 
-PadLink 各行的测试条件：Mac 已关闭 AWDL，且没有同时连着 AirPlay 副屏（原因见「故障排查」）。
+PadLink 各行的测试条件：没有同时连着 AirPlay 副屏；Wi-Fi 各行 Mac 已关闭 AWDL（原因见「故障排查」）。USB-C 有线时传输耗时中位数 0.4 ms、p95 1.4 ms，不受无线干扰。
 
 ## 从源码构建
 
