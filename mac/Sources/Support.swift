@@ -63,6 +63,7 @@ enum MsgType: UInt8 {
     case pong = 0x83
     case status = 0x84
     case show = 0x85              // bring the display to the front on the tablet
+    case helloRequest = 0x86      // USB: the tablet may still hold a session from before a Mac restart
 }
 
 enum FrameFlags {

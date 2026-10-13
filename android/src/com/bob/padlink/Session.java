@@ -41,7 +41,7 @@ final class Session implements VideoDecoder.Listener {
     // tablet -> mac
     static final int MSG_HELLO = 0x01, MSG_INPUT = 0x02, MSG_PING = 0x03, MSG_STATS = 0x04, MSG_KEYFRAME = 0x05;
     // mac -> tablet
-    static final int MSG_CONFIG = 0x81, MSG_FRAME = 0x82, MSG_PONG = 0x83, MSG_STATUS = 0x84, MSG_SHOW = 0x85;
+    static final int MSG_CONFIG = 0x81, MSG_FRAME = 0x82, MSG_PONG = 0x83, MSG_STATUS = 0x84, MSG_SHOW = 0x85, MSG_HELLO_REQUEST = 0x86;
 
     final String peer;
     final boolean usb;
@@ -83,7 +83,13 @@ final class Session implements VideoDecoder.Listener {
         this.input = in;
         this.output = out;
         this.closer = closer;
-        this.hello = hello;
+        // A session id lets the Mac tell a restarted tablet app (new session, same link) from a repeated hello.
+        JSONObject h = hello;
+        try {
+            h = new JSONObject(hello.toString()).put("session", System.currentTimeMillis());
+        } catch (JSONException ignored) {
+        }
+        this.hello = h;
         this.listener = listener;
     }
 
@@ -271,6 +277,9 @@ final class Session implements VideoDecoder.Listener {
                 }
                 final int w = videoW, h = videoH;
                 ui.post(() -> listener.onVideoConfig(this, w, h));
+            } else if (type == MSG_HELLO_REQUEST) {
+                // A restarted Mac host on the same USB link: start over with a fresh hello.
+                send(MSG_HELLO, hello.toString().getBytes(StandardCharsets.UTF_8));
             } else if (type == MSG_SHOW) {
                 ui.post(() -> listener.onShowRequested(this));
             } else if (type == MSG_STATUS) {
@@ -383,6 +392,16 @@ final class Session implements VideoDecoder.Listener {
             j.put("net_p95", pct(s, 2, 95));
             j.put("decode_p50", pct(s, 3, 50));
             j.put("decoder", decName);
+            // Battery: current in microamps (negative = discharging on most devices), voltage in mV.
+            android.content.Context ctx = PadLinkHub.appContext();
+            if (ctx != null) {
+                android.os.BatteryManager bm = ctx.getSystemService(android.os.BatteryManager.class);
+                android.content.Intent b = ctx.registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+                j.put("batt_ua", bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW));
+                j.put("batt_pct", bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY));
+                j.put("batt_mv", b != null ? b.getIntExtra(android.os.BatteryManager.EXTRA_VOLTAGE, 0) : 0);
+                j.put("plugged", b != null ? b.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) : 0);
+            }
         } catch (JSONException ignored) {
         }
         send(MSG_STATS, j.toString().getBytes(StandardCharsets.UTF_8));

@@ -124,7 +124,9 @@ final class HidLink {
             }
             // Other phones may be on the same adb server: only a device with the app, and the Bonjour address if known.
             let hosts = tabletHosts()
-            let ordered = devices.filter { d in hosts.contains { d.hasPrefix($0 + ":") } } + (hosts.isEmpty ? devices : [])
+            // Bonjour-matched first; others (e.g. the tablet over USB, listed by serial) still need the app installed.
+            let matched = devices.filter { d in hosts.contains { d.hasPrefix($0 + ":") } }
+            let ordered = matched + devices.filter { !matched.contains($0) }
             var picked: (String, String)?
             for serial in ordered {
                 let path = run(adb, ["-s", serial, "shell", "pm", "path", "com.bob.padlink"])

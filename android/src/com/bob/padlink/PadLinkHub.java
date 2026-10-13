@@ -66,6 +66,11 @@ final class PadLinkHub implements Session.Listener {
     private Ui ui;
     private volatile boolean uiVisible;
 
+    static Context appContext() {
+        PadLinkHub h = instance;
+        return h != null ? h.app : null;
+    }
+
     static synchronized PadLinkHub get(Context c) {
         if (instance == null) instance = new PadLinkHub(c.getApplicationContext());
         return instance;

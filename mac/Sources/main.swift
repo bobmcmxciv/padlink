@@ -28,6 +28,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var conn: PadConnection?
     private var connName = ""
     private var streamer: ScreenStreamer?
+    private var helloSession: Int64?          // the tablet's session id from its hello
     private let injectorLock = NSLock()
     private var _injector: InputInjector?
     /// Read on the connection's reader thread, written on main.
@@ -217,6 +218,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         c.start()
+        if c.isUSB { requestHello(c) }
         // USB: Android shows "open Mac 副屏 for this accessory?" first; give the user time to answer.
         DispatchQueue.main.asyncAfter(deadline: .now() + (c.isUSB ? 120 : 4)) { [weak self, weak c] in
             guard let self, let c, self.conn === c, self.streamer == nil else { return }
@@ -224,12 +226,35 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// USB: the tablet may still hold a session from before a Mac restart, and the first message on a reopened link
+    /// can get lost, so keep asking for its hello until it arrives.
+    private func requestHello(_ c: PadConnection) {
+        guard conn === c, streamer == nil, !c.isClosed else { return }
+        c.send(.helloRequest)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak c] in
+            guard let self, let c else { return }
+            self.requestHello(c)
+        }
+    }
+
     private func onHello(_ payload: Data, from c: PadConnection) {
-        guard conn === c, streamer == nil else { return }
+        guard conn === c else { return }
         guard let hello = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               let w = hello["width"] as? Int, let h = hello["height"] as? Int, w > 0, h > 0 else {
             c.close("bad hello"); return
         }
+        let session = (hello["session"] as? NSNumber)?.int64Value
+        if streamer != nil {
+            // Over USB the link outlives the tablet app: a hello with a new session id means the app restarted.
+            guard let session, session != helloSession else { return }
+            Log.info("tablet started a new session on the same link; restarting the stream")
+            streamer?.onStop = nil
+            streamer?.stop()
+            streamer = nil
+            injector?.releaseAll()
+            injector = nil
+        }
+        helloSession = session
         let name = hello["name"] as? String ?? "Android Pad"
         connName = c.isUSB ? name : connName
         let codecs = hello["codecs"] as? [String] ?? ["video/avc"]
