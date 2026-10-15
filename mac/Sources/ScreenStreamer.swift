@@ -77,7 +77,15 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         cfg.height = height
         cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         cfg.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
-        cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
+        // Half a frame, not one: frame timestamps jitter by a fraction of a millisecond, and with exactly 1/fps every
+        // frame that comes a little early is discarded (measured: ~110 of 120 fps captured; with 1/(2·fps) ~119).
+        // The virtual display's own refresh rate still caps the rate at fps.
+        cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps * 2))
+        // Diagnostics: `defaults write com.bob.padlink.host captureFPS <n>` (0 = no minimum interval).
+        if let n = UserDefaults.standard.object(forKey: "captureFPS") as? Int {
+            cfg.minimumFrameInterval = n > 0 ? CMTime(value: 1, timescale: CMTimeScale(n)) : .zero
+            Log.info("capture minimum frame interval override: \(n > 0 ? "1/\(n) s" : "none")")
+        }
         cfg.queueDepth = 5
         cfg.showsCursor = true
         cfg.capturesAudio = false
@@ -170,6 +178,12 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         guard SCFrameStatus(rawValue: rawStatus) == .complete, let pb = CMSampleBufferGetImageBuffer(sb) else { return }
         lastBuffer = pb
         refreshesLeft = 3
+        let pts = hostNs(CMSampleBufferGetPresentationTimeStamp(sb))
+        if lastCapturePts > 0, pts > lastCapturePts {
+            let ms = Double(pts - lastCapturePts) / 1e6
+            statIntervals[Self.intervalBuckets.firstIndex { ms < $0 } ?? Self.intervalBuckets.count] += 1
+        }
+        lastCapturePts = pts
         encode(pb, captureNs: hostNs(CMSampleBufferGetPresentationTimeStamp(sb)))
     }
 
@@ -282,6 +296,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    // Time between consecutive complete frames: one 120 Hz refresh is 8.33 ms, a skipped refresh shows as ~16.7.
+    private static let intervalBuckets: [Double] = [7, 8, 8.33, 8.7, 10, 12.5, 15, 18.3, 25]
+    private var statIntervals = Array(repeating: 0, count: 10)
+    private var lastCapturePts: UInt64 = 0
+
     private func maybeLogStats() {
         let now = hostNowNs()
         guard now - statSince >= 10_000_000_000 else { return }
@@ -292,6 +311,9 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
                         Double(statFrames) / secs, statDropped, statKeyframes, Double(statBytes) * 8 / secs / 1e6, p50))
         Log.info("mac: capture callbacks by status (0 complete, 1 idle, 2 blank, 3 suspended, 4 started, 5 stopped): \(statCaptured.sorted { $0.key < $1.key })")
         statCaptured.removeAll()
+        let labels = Self.intervalBuckets.map { "<\($0)" } + [">=\(Self.intervalBuckets.last!)"]
+        Log.info("mac: capture intervals ms " + zip(labels, statIntervals).map { "\($0) \($1)" }.joined(separator: ", "))
+        statIntervals = Array(repeating: 0, count: Self.intervalBuckets.count + 1)
         if statEncoderDropped > 0 { Log.info("mac: encoder dropped \(statEncoderDropped) frames") }
         statEncoderDropped = 0
         statFrames = 0; statDropped = 0; statBytes = 0; statKeyframes = 0; statEncodeNs.removeAll(); statSince = now
